@@ -1,0 +1,532 @@
+---
+title: "Beijing Multi-Site Air-Quality Data Set"
+author: "Danyu Zhang & Daniel Alonso"
+date: "March 21st, 2021"
+output: pdf_document
+---
+
+### Libraries used: 
+```{r,echo=FALSE}
+library(zoo)
+library(dplyr)
+library(forecast)
+library(tsoutliers)
+```
+
+### Description of Beijing Multi-Site Air-Quality Dataset
+
+This data set includes hourly air pollutants data from 12 nationally-controlled air-quality monitoring sites. The air-quality data are from the Beijing Municipal Environmental Monitoring Center. The meteorological data in each air-quality site are matched with the nearest weather station from the China Meteorological Administration. The time period is from March 1st, 2013 to February 28th, 2017 (35064 observations). Missing data are denoted as NA, more information please check this [link](https://archive.ics.uci.edu/ml/datasets/Beijing+Multi-Site+Air-Quality+Data). 
+
+For this project, we will only consider district Tiantan (Temple of Heaven) of Beijing, which is a very centred and visited zone in the city and district Dingling, which is a suburban district. Our purpose is to check if there's difference O3 pollution in time series for both districts. 
+
+The data set contains the the following variables: 
+
+- **year, month, day and hour:** Time variable which denotes the year, month, day and hour of the taken value for each meteorological variables the data set contains. 
+- **PM2.5:** Fine Suspended Particles, PM2.5 concentration (ug/m^3), 
+- **PM10:** Respirable suspended particulates, PM10 concentration (ug/m^3)
+- **O3:** O3 concentration (ug/m^3). Ozone is a gas composed of three atoms of oxygen (O3).
+- **SO2:** SO2 concentration (ug/m^3). Sulphur dioxide (SO2) is an air pollutant made up of sulphur and oxygen atoms and is harmful to both plants and people. On dissolution in rain water, SO2 produces acid rain. This SO3 gets converted into H2SO4 in the presence of moisture, which comes down in the form acid rain.
+- **NO2:** NO2 concentration (ug/m^3). NO2 primarily gets in the air from the burning of fuel. NO2 forms from emissions from cars, trucks and buses, power plants, and off-road equipment.
+- **CO:** CO concentration (ug/m^3). Carbon Monoxide, the greatest sources of CO to outdoor air are cars, trucks and other vehicles or machinery that burn fossil fuels.
+
+We will only be using the date variables and O3 pollution level. 
+
+```{r}
+# Data reading
+data1 = read.csv("PRSA_Data_Tiantan_20130301-20170228.csv")
+data1 = data1[1:11]
+data1 = data1[-(6:10)]
+
+data2 = read.csv("PRSA_Data_Dingling_20130301-20170228.csv")
+data2 = data2[1:11]
+data2 = data2[-(6:10)]
+```
+
+```{r}
+data1 <- data1 %>% rename(O3_Tiantan=O3)
+data2 <- data2 %>% rename(O3_Dingling=O3)
+
+data <- left_join(data1, data2)
+
+```
+
+Simple view of the modified data set: 
+```{r}
+knitr::kable(
+    head(data),
+    booktabs=TRUE,
+    longtable=TRUE,
+    caption="Beijing Air-Quality Data Set"
+)
+```
+
+### 1. Dealing with the Missing Values
+
+Check if there are missing values in different time series; how many are there. 
+```{r}
+sum(is.na(data$O3_Tiantan))
+sum(is.na(data$O3_Dingling))
+```
+
+During this step, we will deal with the missing values by using interpolation tecniques, which means replacing them using the average of two nearest rows' values. 
+```{r}
+data_new = na.approx(data)
+data_new = as.data.frame(data_new)
+```
+
+Check that there are no missing values anymore. 
+```{r}
+sum(is.na(data_new$O3_Tiantan))
+sum(is.na(data_new$O3_Dingling))
+```
+
+### 2. Visualizing time series
+
+#### 2.1 Original Hourly Data Set 
+
+Define Time series processes: 
+
+```{r}
+firstHour <- 31*24+28*24
+
+O3_Tiantan <- ts(data_new$O3_Tiantan,start=c(2013,firstHour), frequency=24*365)
+O3_Dingling <- ts(data_new$O3_Dingling,start=c(2013,firstHour), frequency=24*365)
+```
+
+- **Tiantan District**
+
+It is apparently to observe that the O3 pollution time series in Tiantan is a non-stationary process: it does not have a constant mean, neither the variance (heterocedastic process), also the covariance between the observations seems not depends only on the lag, the series has a long memory. 
+
+Moreover, we can observe the seasonal variation that repeats every year, during the middle (summer) of a year from 2013 to 2016, the ozone pollution increases significantly while during the beginnings of the years (winter/spring) the ozone pollution is lower, which can be possibly produced due to the summer vacations, people uses cars more often. It is possible to eliminate that effect by doing the difference of 365 lags. Furthermore, there is a very significant outlier in the data set that seems to be an additive outlier due to the facgt that it's only affecting 1 observation in the time series.
+
+```{r}
+plot(O3_Tiantan)
+```
+
+By checking the autocorrelation plot and the partial autocorrelation it is very obvious that this process is not stationary, the autocorrelation decays very slowly and reaches top after another period of time, the partial autocorrelation has more or less the same pattern which indicates seasonalility patterns. 
+
+```{r}
+par(mfrow=c(1,2))
+
+acf(O3_Tiantan)
+pacf(O3_Tiantan)
+```
+
+- **Dingling District**
+
+The conclusions that we can tell from the plot are very similar to the plot before, it is not a stationary process due to the facts that it does not have a constant mean; nor a constant variance, in the district Dingling the series seems vary more than district Tiantan; and the autocorrelation does not only depend on the lag of time, to make a summary, it has long memory.  
+
+Also it shows a clear seasonality pattern, more ozone pollution during summer time and less ozone pollution during winter. We will be able to eliminate that effect by doing the difference of 365 lags. There are also significant outliers in the data set of Dingling District.
+
+```{r}
+plot(O3_Dingling)
+```
+
+Very likely to the plots we obtained before for Tiantan District, non-stationary process (seasonalility patterns). 
+```{r}
+par(mfrow=c(1,2))
+
+acf(O3_Dingling)
+pacf(O3_Dingling)
+```
+
+#### 2.2 Modified Daily Data Set 
+
+Nevertheless, because of that we have hourly data, the amount of observations is massive. If we want to check more detailed patterns, it is going to be very laborious to do so. As the consequence of that, we will average the 24 hourly observations in oder to obtain daily mean ozone pollution time series.   
+
+```{r}
+data_new$date <- rep("0",length(data_new$year))
+
+for (i in 1:length(data_new$year)) {
+    data_new$date[i] <- paste(c(data_new$year[i],data_new$month[i],data_new$day[i]),collapse="-")
+}
+
+daily_data <- data_new %>% group_by(date) %>% 
+  summarise(mean_O3_Tiantan=mean(O3_Tiantan), mean_O3_Dingling=mean(O3_Dingling))
+
+dates <- unique(data_new$date)
+daily_data$order <- match(daily_data$date, dates)
+daily_data <- daily_data[order(daily_data$order),]
+daily_data <- daily_data[,names(daily_data) != "order"]
+```
+
+```{r}
+knitr::kable(
+    head(daily_data),
+    booktabs=TRUE,
+    longtable=TRUE,
+    caption="Daily Beijing Air-Quality Data Set"
+)
+```
+
+Define Time series processes: 
+```{r}
+O3_Tiantan_daily <- ts(daily_data$mean_O3_Tiantan, start = c(2013, 60), frequency = 365)
+O3_Dingling_daily <- ts(daily_data$mean_O3_Dingling, start = c(2013, 60), frequency = 365)
+```
+
+- **Tiantan District**
+
+We can observe very obviously from the plot that it's not stationary due to the facts that it does not have constant mean, the variance seems to be more or less constant (homocedastic process), but the covariance between the observations seems not depends only on the lag, the series has a long memory. 
+
+Additionary, as we have concluded before in the hourly data set, there is seasonal variation that repeats every year, during the summertime the ozone pollution is usually higher than winter/spring. We are able to get rid of it by differenciate 365 lags. Again, there is a very significant additive outlier as in the hourly data set (by averaging the process does not remove that).
+
+```{r}
+plot(O3_Tiantan_daily)
+```
+
+We can observe from the autocorrelation plot and the partial autocorrelation that the series O3_Tiantan_daily is not stationary, the autocorrelation decays very slowly and seems to stay at a point forever which indicates a seasonal variation, the partial autocorrelation has a lot of significant peaks too.
+
+```{r}
+par(mfrow=c(1,2))
+
+acf(O3_Tiantan_daily)
+pacf(O3_Tiantan_daily)
+```
+
+- **Dingling District**
+
+From the following plot it is easy to notice that the process is again not stationary: mean of the process not constant; variance of the process seems to be constant; and the autocorrelation does not only depend on the lag of time, long memory process.  
+
+Also it shows a clear seasonality pattern, more ozone pollution during middle of an year and less ozone pollution during start/end of an year. Elimination can be done by doing the difference of 365 lags. There are also very significant outliers in the data set of Dingling District that even has enlarged the y axis.
+
+```{r}
+plot(O3_Dingling_daily)
+```
+
+Very likely to the plots we obtained before for O3_Tiantan_daily, non-stationary process (seasonalility patterns). 
+```{r}
+par(mfrow=c(1,2))
+
+acf(O3_Dingling_daily)
+pacf(O3_Dingling_daily)
+```
+
+### 3. Obtaining Stationary Process
+
+#### 3.1 Original Hourly Data Set 
+
+- **Tiantan District**
+
+In order to obtain a stationary process for ozone pollution hourly data in Tiantan, first we eiliminate the heterocedasticity by doing logarithmic transformation, afterwards, we differenciate the process by 365*24 just to remove the yearly seasonal pattern. 
+
+We can observe that the process has constant mean aroud 0, constant variance, and the autocorrelation only depends on the lags between the observations.  
+```{r}
+dlO3_Tiantan = diff(log(O3_Tiantan+1),365*24)
+plot(dlO3_Tiantan)
+```
+
+From the autocorrelation plot we can observe a exponentially decaying pattern, and from partial autocorrelation plot, we can only observe 2 siginificant peaks, it is very likely to be a moving average process of order 2, we will lately fit the model in part 4.
+
+```{r}
+par(mfrow=c(1,2))
+
+acf(dlO3_Tiantan)
+pacf(dlO3_Tiantan)
+```
+
+- **Dingling District**
+
+For Dingling District we do the exact same thing as we did for Tiantan District, after all the modifications are done, we can notice that it has constant mean, constant variance, and the autocorrelation only depends on the lags between the observations.  
+
+```{r}
+dlO3_Dingling = diff(log(O3_Dingling+1),365*24)
+plot(dlO3_Dingling)
+```
+
+We have the same situation as before, the patterns are very similar to a MA(2) process. 
+
+```{r}
+par(mfrow=c(1,2))
+
+acf(dlO3_Dingling)
+pacf(dlO3_Dingling)
+```
+
+#### 3.2 Modified Daily Data Set 
+
+- **Tiantan District**
+
+In order to obtain a stationary process for ozone pollution daily data in Tiantan, it is essential to differenciate the process by 365 to remove the yearly seasonal pattern. 
+
+We can observe that the averaged ozone pollution data is more or less stationary: constant mean around 1, roughly constant variance with a variation, and the autocorrelation only depends on the lag between observations. 
+
+```{r}
+dO3_Tiantan_daily = diff(O3_Tiantan_daily,365)
+plot(dO3_Tiantan_daily)
+```
+
+In the autocorrelation plot we can see that there are 2 significant peaks at first, and then some other significant peaks 11, 12, 20, 21, .. It is not possible to remove those significant peaks by diffenrenciating. 
+
+In the partial autocorrelation plot we can see that there are 2 significant peaks, and as in the ACF, some other significant peaks after that. 
+
+By observing the ACF and PACF, it is likely that the ozone daily pollution in Tiantan follows ARIMA(2,0,2) model in the first place. 
+
+```{r}
+par(mfrow=c(1,2))
+
+acf(dO3_Tiantan_daily)
+pacf(dO3_Tiantan_daily)
+```
+
+- **Dingling District**
+
+For Dingling District we do the exact same thing as we did for Tiantan District, and we have obtained a stationary process: constant mean around 0, roughly constant variance (with a few very large outliers) and the dependence of observations only depends on lags. 
+
+```{r}
+dO3_Dingling_daily = diff(O3_Dingling_daily, 365)
+plot(dO3_Dingling_daily)
+```
+
+From the ACF plot we can observe the exponential decaying pattern, and in the PACF plot we can observe two significant peaks. 
+
+As a conclusion, a MA(2) process might be correct for ozone daily pollution in Dingling.  
+
+```{r}
+par(mfrow=c(1,2))
+
+acf(dO3_Dingling_daily)
+pacf(dO3_Dingling_daily)
+```
+
+### 4. Modeling: Comparisons of models and Estimations
+
+#### 4.1 Original Hourly Data Set 
+
+As we have identified before, we will firstly build a MA(2) process for both Tiantan and Dingling District, afterwards, we will compare it by AIC criteria with the automatically recognized models by using *auto.arima* function from *forecast* package. We will not use *tso* function from *tsoseries* package due to the fact we could not see any outliers naked eyes and also there are too many observations, it is running very slow. 
+
+We will only consider 24866 observations to train the models (data from 2013 to 2016, 24866/26304=95%), and the rest to test/predict.
+
+```{r}
+bt1 <- window(dlO3_Tiantan, start = c(2013, firstHour), end = c(2017,1))
+bt2 <- window(dlO3_Dingling, start = c(2013, firstHour), end = c(2017,1))
+```
+
+- **Tiantan District**
+
+1. MA(2) process by observing ACF and PACF plot
+
+Which means that the current observation is based on a linear combination of current and past 2 innovations that are stochastic with coefficient 1.08 (not invertable) and 0.57: 
+
+$$x_t = a_t + \theta_1 a_{t-1} + \theta_2 a_{t-2}$$
+
+$$x_t = a_t + 1.08 a_{t-1} + 0.57 a_{t-2}$$
+
+```{r}
+model_Tiantan1 <- arima(bt1,order=c(0,0,2))
+model_Tiantan1
+```
+
+2. ARIMA(0,1,5) by using function *auto.arima*
+
+By using *auto.arima* function, we got an ARIMA(0,1,5) model which means that the current differenced data is a linear combination of past 5 innovations: 
+
+$$\triangledown x = a_t + \theta_1 a_{t-1} + \theta_2 a_{t-2} + \theta_3 a_{t-3} + \theta_4 a_{t-4} + \theta_5 a_{t-5}$$
+
+$$\triangledown x = a_t + 0.1345 a_{t-1} -0.0803 a_{t-2} -0.1207 a_{t-3} -0.1094 a_{t-4} -0.1125 a_{t-5}$$
+
+```{r}
+model_Tiantan2 <- auto.arima(bt1)
+model_Tiantan2
+```
+
+**Conclusions:**
+Although the *auto.arima* model (ARIMA(0,1,5)) that has been automatically generated is more complicated and harder to interpret, but the value of AIC has decreased from 49747.43 to 39136.81. So we consider that the second model is better. 
+
+- **Dingling District**
+
+1. MA(2) process by observing ACF and PACF plot
+
+Which means that the current observation is based on a linear combination of current and past 2 innovations that are stochastic with coefficient 1.11 (not invertable) and 0.59: 
+
+$$x_t = a_t + \theta_1 a_{t-1} + \theta_2 a_{t-2}$$
+
+$$x_t = a_t + 1.11 a_{t-1} + 0.59 a_{t-2}$$
+```{r}
+model_Dingling1 <- arima(bt2,order=c(0,0,2))
+model_Dingling1
+```
+
+2. ARIMA(0,1,5) by using function *auto.arima*
+
+By using *auto.arima* function, we got an ARIMA(0,1,5) model which means that the current differenced data is a linear combination of past 5 innovations with following coefficients: 
+
+$$\triangledown x = a_t + \theta_1 a_{t-1} + \theta_2 a_{t-2} + \theta_3 a_{t-3} + \theta_4 a_{t-4} + \theta_5 a_{t-5}$$
+
+$$\triangledown x = a_t + 0.0667 a_{t-1} -0.0595 a_{t-2} -0.0496 a_{t-3} -0.0680 a_{t-4} -0.0610 a_{t-5}$$
+
+```{r}
+model_Dingling2 <- auto.arima(bt2)
+model_Dingling2
+```
+
+**Conclusions:**
+We have the same case as we had before, the value of AIC has reduced very significantly, from 41690.88 to 24480.37. Due to that reason, it makes more sense to take the ARIMA(0,1,5) model that *auto.arima* function has identified.  
+
+
+#### 4.2 Modified Daily Data Set 
+
+- **Tiantan District**
+
+By observing the ACF and PACF, it is possible to model a ARIMA(2,0,2) process in the first place. 
+
+So we will firstly build a ARIMA(2,0,2) process, and compare it by AIC criteria with the automatically recognized models by using *auto.arima* function from *forecast* package and *tso* function from *tsoseries* package (although we cannot identify any outliers naked eyes). 
+
+We will only consider 1000 observations to train the models (1000/1096=91%), and the rest to test/predict.
+
+```{r}
+bt3<-window(dO3_Tiantan_daily,start = c(2013, 60), end = c(2017,1))
+bt4<-window(dO3_Dingling_daily,start = c(2013, 60), end = c(2017,1))
+```
+
+1. ARIMA(2,0,2) process by observing ACF and PACF plot
+
+Which means that the current observation is based on a linear combination of current and past 2 innovations that are stochastic and past 2 observations with following coefficients: 
+
+$$x = a_t + \theta_1 a_{t-1} + \theta_2 a_{t-2} + \phi_1 x_{t-1} + \phi_2 x_{t-2}$$
+$$x = a_t -0.2575 a_{t-1} + 0.0388 a_{t-2} + 0.7969 x_{t-1} -0.2575 x_{t-2}$$
+
+```{r}
+model_Tiantan_daily1 <- arima(bt3,order=c(2,0,2))
+model_Tiantan_daily1
+```
+
+2. ARIMA(3,1,2) by using function *auto.arima*
+
+By using *auto.arima* function, we got an ARIMA(3,1,2) model which means that the current differenced data is a linear combination of past 2 innovations and past 3 observations with following coefficients: 
+
+$$\triangledown x = a_t + \theta_1 a_{t-1} + \theta_2 a_{t-2} + \phi_1 x_{t-1} + \phi_2 x_{t-2} + \phi_3 x_{t-3}$$
+
+$$\triangledown x = a_t -1.8126 a_{t-1} + 0.8186 a_{t-2} + 1.3440 x_{t-1} -0.5296 x_{t-2} + 0.0437 x_{t-3}$$
+
+```{r}
+model_Tiantan_daily2 <- auto.arima(bt3)
+model_Tiantan_daily2
+```
+
+3. ARIMA(2,1,2) by using function *tso*
+
+By using *tso* function, we got an ARIMA(2,1,2) model which means that the current differenced data is a linear combination of past 2 innovations and past 2 observations with following coefficients: 
+
+$$\triangledown x = a_t + \theta_1 a_{t-1} + \theta_2 a_{t-2} + \phi_1 x_{t-1} + \phi_2 x_{t-2}$$
+
+$$\triangledown x = a_t -1.5017 a_{t-1} + 0.5070 a_{t-2} + 1.0152 x_{t-1} -0.3327 x_{t-2}$$
+```{r}
+model_Tiantan_daily3 <- tso(bt3)
+model_Tiantan_daily3
+```
+
+**Conclusions:**
+The models that are automatically fitted using *auto.arima* and *tso* are more complex, and the values of AIC have only decreased from 10002.65 to 9986.26 and 9913.32 respectively, as a consecuence of that, we will pick the first model, ARIMA(2,0,2). 
+
+- **Dingling District**
+
+By observing the ACF and PACF, it is possible to model a MA(2) process as for hourly data. 
+
+1. MA(2) process by observing ACF and PACF plot
+
+Which means that the current observation is based on a linear combination of current and past 2 innovations that are stochastic with coefficient 0.6606 and 0.2553: 
+
+$$x_t = a_t + \theta_1 a_{t-1} + \theta_2 a_{t-2}$$
+
+$$x_t = a_t + 0.6606 a_{t-1} + 0.2553 a_{t-2}$$
+```{r}
+model_Dingling_daily1 <- arima(bt4,order=c(0,0,2))
+model_Dingling_daily1
+```
+
+2. ARIMA(0,1,4) by using function *auto.arima*
+
+By using *auto.arima* function, we got an ARIMA(0,1,4) model which means that the current differenced data is a linear combination of past 4 innovations with following coefficients: 
+
+$$\triangledown x_t = a_t + \theta_1 a_{t-1} + \theta_2 a_{t-2} + \theta_3 a_{t-3} + \theta_4 a_{t-4}$$
+
+$$\triangledown x_t = a_t -0.3029 a_{t-1} -0.3413 a_{t-2} -0.1731 a_{t-3} -0.1329 a_{t-4}$$
+
+```{r}
+model_Dingling_daily2 <- auto.arima(bt4)
+model_Dingling_daily2
+```
+
+3. ARIMA(0,1,3) by using function *tso*
+
+By using *auto.arima* function, we got an ARIMA(0,1,3) model which means that the current differenced data is a linear combination of past 3 innovations with following coefficients: 
+
+$$\triangledown x_t = a_t + \theta_1 a_{t-1} + \theta_2 a_{t-2} + \theta_3 a_{t-3}$$
+
+$$\triangledown x_t = a_t -0.3948 a_{t-1} -0.3674 a_{t-2} -0.1888 a_{t-3}$$
+```{r}
+model_Dingling_daily3 <- tso(bt4)
+model_Dingling_daily3
+```
+
+**Conclusions:**
+
+The models identified by *auto.arima* and *tso* functions are more complex, and the values of AIC have only decreased very little, from 10351.55 to 10315.67 and 10238.03 respectively, as a consecuence of that, we will pick the first model, ARIMA(0,0,2). 
+
+### 5. Forecast
+
+#### 5.1 Original Hourly Data Set 
+
+- **Tiantan District**: Model picked: ARIMA(0,1,5)
+
+As the *Hourly Ozone Pollution Series in Tiantan* series is invertable. In this case, its mean converts to 0 after 5 periods of time because it has order 5 of moving average, which is hardly visible as we have a large number of observations, and the integrated part doesn't change anything since all the predictions for an integrated process is the last observation. Also, by observing the confidence bounds, it is able to see that they have went to infinity caused by the integrated part, and due to the fact that we are predicting a very large amount of observations (1438), but all the observations are in bound.  
+
+```{r}
+forecast_Tiantan<-predict(model_Tiantan2, n.ahead=1438)
+
+ts.plot(dlO3_Tiantan,lty=3, main="Prediction of Hourly Ozone Pollution in Tiantan")
+lines(bt1,lwd=2)
+lines(forecast_Tiantan$pred,lwd=2,col="red")
+lines(forecast_Tiantan$pred+forecast_Tiantan$se*1.96,lwd=2,col="red")
+lines(forecast_Tiantan$pred-forecast_Tiantan$se*1.96,lwd=2,col="red")
+```
+
+- **Dingling District** Model picked: ARIMA(0,1,5)
+
+For the case of *Hourly Ozone Pollution Series in Dingling*, we get roughly same conclusions since we have same models and similar process. Although it is very surprising that the air pollution for a very centred district and a suburban district are likely the same. 
+The predictions of the process converge to 0 after 5 periods of time due to the MA(5) part of the model, and the confidence intervals converge to infinity due to the integrated part. 
+
+```{r}
+forecast_Dingling<-predict(model_Dingling2, n.ahead=1438)
+
+ts.plot(dlO3_Dingling, lty=3, main="Prediction of Hourly Ozone Pollution in Dingling")
+lines(bt2,lwd=2)
+lines(forecast_Dingling$pred,lwd=2,col="red")
+lines(forecast_Dingling$pred+forecast_Dingling$se*1.96,lwd=2,col="red")
+lines(forecast_Dingling$pred-forecast_Dingling$se*1.96,lwd=2,col="red")
+```
+
+
+#### 5.2 Modified Daily Data Set 
+
+- **Tiantan District** Model picked: ARIMA(2,0,2)
+
+As *Daily Ozone Pollution Series in Tiantan* is a  stationary process, the mean and the confidence bounds always converge to a constant. It is converging very fast due to the fact that the coefficients are very small. The first 2 observations are very different from mean due to the moving average part. 
+
+Additionaly, we can observe that all the true observations are inside the confidence intervals, although some other observationes observed before are out. 
+
+```{r}
+forecast_Tiantan_Daily<-predict(model_Tiantan_daily1, n.ahead=58)
+
+ts.plot(dO3_Tiantan_daily, lty=3, main="Prediction of Daily Ozone Pollution in Tiantan")
+lines(bt3,lwd=2)
+lines(forecast_Tiantan_Daily$pred,lwd=2,col="red")
+lines(forecast_Tiantan_Daily$pred+forecast_Tiantan_Daily$se*1.96,lwd=2,col="red")
+lines(forecast_Tiantan_Daily$pred-forecast_Tiantan_Daily$se*1.96,lwd=2,col="red")
+```
+
+- **Dingling District** Model picked: ARIMA(0,0,2)
+
+As the *Daily Ozone Pollution Series in Dingling* is a stationary process, the mean and the confidence bounds always converge to a constant. The first 2 observations are different from the mean due to the moving average part, after those 2 predictions, all others future instances are predicted as the mean of the process.  
+
+```{r}
+forecast_Dingling_Daily<-predict(model_Dingling_daily1, n.ahead=58)
+
+ts.plot(dO3_Dingling_daily,lty=3, main="Prediction of Daily Ozone Pollution in Dingling")
+lines(bt4,lwd=2)
+lines(forecast_Dingling_Daily$pred,lwd=2,col="red") 
+lines(forecast_Dingling_Daily$pred+forecast_Dingling_Daily$se*1.96,lwd=2,col="red")
+lines(forecast_Dingling_Daily$pred-forecast_Dingling_Daily$se*1.96,lwd=2,col="red")
+```
+
