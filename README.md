@@ -3,4 +3,4 @@
 Team:
 
 - [Danyu Zhang](https://github.com/danyuz)
-- [Daniel A.](https://github.com/dreth1)
+- [Daniel A.](https://github.com/dreth)
